@@ -582,3 +582,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         uint64 now64 = uint64(block.timestamp);
         if (!(finalEarliestAt > now64)) revert Futurino__BadInput();
         if (!(finalLatestAt > finalEarliestAt)) revert Futurino__BadInput();
+        if (!(challengeLatestAt > finalEarliestAt && challengeLatestAt <= finalLatestAt)) revert Futurino__BadInput();
+
+        capsuleId = computeCapsuleId(owner, asset, bounty, contentHash, now64, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum);
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.None) revert Futurino__CapsuleState();
+
+        c.state = CapsuleState.Open;
+        c.owner = owner;
+        c.asset = asset;
+        c.bounty = bounty;
+        c.contentHash = contentHash;
+        c.openAt = now64;
+        c.finalEarliestAt = finalEarliestAt;
+        c.finalLatestAt = finalLatestAt;
+        c.challengeLatestAt = challengeLatestAt;
+        c.stewardQuorum = stewardQuorum;
+
+        emit FuturinoCapsuleOpened(
+            capsuleId,
+            owner,
+            asset,
+            bounty,
+            contentHash,
+            now64,
+            finalEarliestAt,
+            finalLatestAt,
+            challengeLatestAt,
+            stewardQuorum
+        );
+    }
+
+    // =========
+    // Owner cancel (only before finalEarliestAt and only if never proposed)
+    // =========
+    function cancelCapsule(bytes32 capsuleId, bytes32 reasonHash) external whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+        if (msg.sender != c.owner) revert Futurino__NotCapsuleOwner();
+        if (uint64(block.timestamp) >= c.finalEarliestAt) revert Futurino__CannotCancel();
+        if (c.proposedBeneficiary != address(0) || c.approvals != 0) revert Futurino__CannotCancel();
+
+        c.state = CapsuleState.Paid;
+        _credit(c.owner, c.asset, c.bounty);
+        emit FuturinoCapsuleCancelled(capsuleId, c.owner, reasonHash);
+    }
+
+    // =========
+    // Open capsule (signature-based)
+    // =========
+    function capsuleOpenDigest(
+        address owner,
+        address asset,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum,
+        uint256 ownerNonce
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                CAPSULE_OPEN_TYPEHASH,
+                owner,
+                asset,
+                bounty,
+                contentHash,
+                finalEarliestAt,
+                finalLatestAt,
+                challengeLatestAt,
+                stewardQuorum,
+                ownerNonce,
+                block.chainid,
