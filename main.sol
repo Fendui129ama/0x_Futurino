@@ -655,3 +655,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
                 stewardQuorum,
                 ownerNonce,
                 block.chainid,
+                address(this)
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SALT, structHash));
+    }
+
+    function openCapsuleWithSigETH(
+        address owner,
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable whenNotPaused nonReentrant returns (bytes32 capsuleId) {
+        uint256 nonce = ownerNonces[owner];
+        bytes32 digest = capsuleOpenDigest(owner, address(0), msg.value, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum, nonce);
+        if (usedDigests[digest]) revert Futurino__AlreadyUsed();
+        address signer = FuturinoECDSA.recover(digest, v, r, s);
+        if (signer != owner) revert Futurino__BadSig();
+        usedDigests[digest] = true;
+        ownerNonces[owner] = nonce + 1;
+        capsuleId = _openCapsule(owner, address(0), msg.value, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum);
+    }
+
+    function openCapsuleWithSigToken(
+        address owner,
+        address token,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external whenNotPaused nonReentrant returns (bytes32 capsuleId) {
+        if (token == address(0)) revert Futurino__BadInput();
+        uint256 nonce = ownerNonces[owner];
+        bytes32 digest = capsuleOpenDigest(owner, token, bounty, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum, nonce);
+        if (usedDigests[digest]) revert Futurino__AlreadyUsed();
+        address signer = FuturinoECDSA.recover(digest, v, r, s);
+        if (signer != owner) revert Futurino__BadSig();
+        usedDigests[digest] = true;
+        ownerNonces[owner] = nonce + 1;
+        _pullToken(token, msg.sender, bounty);
+        capsuleId = _openCapsule(owner, token, bounty, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum);
+    }
+
+    // =========
+    // Top up bounty
+    // =========
+    function topUpETH(bytes32 capsuleId) external payable whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state == CapsuleState.None) revert Futurino__CapsuleMissing();
+        if (c.asset != address(0)) revert Futurino__BadInput();
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+        if (msg.value == 0) revert Futurino__BadInput();
+        c.bounty += msg.value;
+        emit FuturinoCapsuleTopped(capsuleId, msg.sender, msg.value);
+    }
+
+    function topUpToken(bytes32 capsuleId, uint256 amount) external whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state == CapsuleState.None) revert Futurino__CapsuleMissing();
+        if (c.asset == address(0)) revert Futurino__BadInput();
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+        if (amount == 0) revert Futurino__BadInput();
+        _pullToken(c.asset, msg.sender, amount);
+        c.bounty += amount;
