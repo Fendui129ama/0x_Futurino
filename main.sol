@@ -728,3 +728,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         if (amount == 0) revert Futurino__BadInput();
         _pullToken(c.asset, msg.sender, amount);
         c.bounty += amount;
+        emit FuturinoCapsuleTopped(capsuleId, msg.sender, amount);
+    }
+
+    // =========
+    // Steward: propose/finalize (quorum)
+    // =========
+    function stewardApproveFinalize(
+        bytes32 capsuleId,
+        address beneficiary,
+        uint256 payout,
+        bytes32 stewardNoteHash
+    ) external whenNotPaused onlySteward nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+
+        uint64 now64 = uint64(block.timestamp);
+        if (now64 < c.finalEarliestAt) revert Futurino__TooEarly();
+        if (now64 > c.finalLatestAt) revert Futurino__TooLate();
+
+        if (beneficiary == address(0)) revert Futurino__BadInput();
+        if (payout == 0 || payout > c.bounty) revert Futurino__BadInput();
+
+        bytes32 pHash = keccak256(abi.encodePacked("FIN", capsuleId, beneficiary, payout, stewardNoteHash, DOMAIN_SALT));
+
+        FinalizeProposal storage fp = finalizeProposal[capsuleId];
+        if (fp.proposalHash == bytes32(0) || fp.proposalHash != pHash) {
+            // new proposal: reset vote counter
+            fp.beneficiary = beneficiary;
+            fp.payout = payout;
+            fp.proposalHash = pHash;
+            c.approvals = 0;
+        }
+
+        if (stewardVotedProposal[capsuleId][msg.sender] == pHash) revert Futurino__AlreadyVoted();
+        stewardVotedProposal[capsuleId][msg.sender] = pHash;
+
+        c.approvals += 1;
+        c.proposedBeneficiary = beneficiary;
+        c.proposedPayout = payout;
+
+        emit FuturinoFinalizeVote(capsuleId, msg.sender, pHash, c.approvals);
+
+        if (c.approvals >= c.stewardQuorum) {
+            emit FuturinoCapsuleFinalized(capsuleId, msg.sender, beneficiary, payout);
+        }
+    }
+
+    // =========
+    // Challenge flow
+    // =========
+    function challenge(bytes32 capsuleId, bytes32 challengeHash) external whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+        if (c.proposedBeneficiary == address(0) || c.approvals < c.stewardQuorum) revert Futurino__CapsuleState();
+        if (challengeHash == bytes32(0)) revert Futurino__BadInput();
+
+        uint64 now64 = uint64(block.timestamp);
+        if (now64 > c.challengeLatestAt) revert Futurino__TooLate();
+        if (c.challenger != address(0)) revert Futurino__ChallengeExists();
+
+        c.state = CapsuleState.Challenged;
+        c.challenger = msg.sender;
+        c.challengeHash = challengeHash;
+        emit FuturinoCapsuleChallenged(capsuleId, msg.sender, challengeHash);
+    }
+
+    function challengeWithBond(bytes32 capsuleId, bytes32 challengeHash) external payable whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Open) revert Futurino__CapsuleState();
+        if (c.proposedBeneficiary == address(0) || c.approvals < c.stewardQuorum) revert Futurino__CapsuleState();
+        if (challengeHash == bytes32(0)) revert Futurino__BadInput();
+        if (msg.value < minChallengeBondWei || msg.value > maxChallengeBondWei) revert Futurino__BondRequired();
+
