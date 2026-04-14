@@ -217,3 +217,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         bytes32 indexed capsuleId,
         address indexed owner,
         address indexed asset,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 openAt,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum
+    );
+
+    event FuturinoCapsuleTopped(bytes32 indexed capsuleId, address indexed from, uint256 amount);
+    event FuturinoCapsuleFinalized(bytes32 indexed capsuleId, address indexed steward, address indexed beneficiary, uint256 payout);
+    event FuturinoCapsuleChallenged(bytes32 indexed capsuleId, address indexed challenger, bytes32 indexed challengeHash);
+    event FuturinoCapsuleResolved(bytes32 indexed capsuleId, bool payoutAllowed, bytes32 resolutionHash);
+    event FuturinoCapsuleCancelled(bytes32 indexed capsuleId, address indexed owner, bytes32 reasonHash);
+    event FuturinoFinalizeVote(bytes32 indexed capsuleId, address indexed steward, bytes32 proposalHash, uint32 approvals);
+    event FuturinoChallengeBondSet(uint96 minBondWei, uint96 maxBondWei, uint16 slashBps);
+    event FuturinoChallengeBondPosted(bytes32 indexed capsuleId, address indexed challenger, uint256 bondWei);
+    event FuturinoChallengeBondSettled(bytes32 indexed capsuleId, address indexed challenger, bool challengerWins, uint256 returnedWei, uint256 slashedWei);
+
+    event FuturinoWithdrawal(address indexed to, address indexed asset, uint256 amount);
+    event FuturinoProtocolFeeSet(uint16 feeBps, address indexed feeSink);
+
+    // =========
+    // Constants (intentionally distinctive)
+    // =========
+    uint16 public constant MAX_FEE_BPS = 425; // 4.25%
+    uint16 public constant MAX_BOND_SLASH_BPS = 9_000; // 90%
+    uint32 public constant MIN_STEWARD_QUORUM = 1;
+    uint32 public constant MAX_STEWARD_QUORUM = 9;
+    uint32 public constant MAX_STEWARD_COUNT = 64;
+    uint16 public constant MAX_ASSET_FEE_OVERRIDE_BPS = 650; // 6.50%
+
+    // challenge bond economics (ETH only)
+    uint96 public constant DEFAULT_MIN_BOND_WEI = 0.0042 ether;
+    uint96 public constant DEFAULT_MAX_BOND_WEI = 0.42 ether;
+
+    bytes32 public constant CAPSULE_OPEN_TYPEHASH =
+        keccak256(
+            "CapsuleOpen(address owner,address asset,uint256 bounty,bytes32 contentHash,uint64 finalEarliestAt,uint64 finalLatestAt,uint64 challengeLatestAt,uint32 stewardQuorum,uint256 ownerNonce,uint256 chainId,address verifyingContract)"
+        );
+
+    bytes32 public immutable DOMAIN_SALT;
+
+    // =========
+    // Randomized, non-user-supplied anchors
+    // (mixed-case address literals per your request)
+    // =========
+    address public immutable GENESIS_FEE_SINK = 0x7aB3dC91f04e2D6bA9c1F3E5B7d8A0c1e2F4b6A8;
+    address public immutable GENESIS_GUARDIAN = 0xB1c2D3e4F5A6b7C8d9E0f1A2B3c4D5e6F7a8B9C0;
+    address public immutable GENESIS_SIGNAL = 0x0dE1aB23cD45Ef67aB89cD01eF23aB45cD67eF89;
+
+    // =========
+    // Governance
+    // =========
+    address public governor;
+    address public pendingGovernor;
+    address public guardian;
+    uint16 public protocolFeeBps;
+    address public feeSink;
+
+    // =========
+    // Permissions
+    // =========
+    FuturinoSet.AddressSet private _stewards;
+    mapping(address => bool) public isAssetAllowed; // includes address(0) for ETH when enabled
+
+    struct AssetConfig {
+        uint16 feeBpsOverride; // 0 means use protocolFeeBps
+        uint240 minBounty; // per-asset minimum bounty (wei or token units)
+    }
+
+    mapping(address => AssetConfig) public assetConfig;
+
