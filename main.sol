@@ -801,3 +801,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         if (challengeHash == bytes32(0)) revert Futurino__BadInput();
         if (msg.value < minChallengeBondWei || msg.value > maxChallengeBondWei) revert Futurino__BondRequired();
 
+        uint64 now64 = uint64(block.timestamp);
+        if (now64 > c.challengeLatestAt) revert Futurino__TooLate();
+        if (c.challenger != address(0)) revert Futurino__ChallengeExists();
+
+        c.state = CapsuleState.Challenged;
+        c.challenger = msg.sender;
+        c.challengeHash = challengeHash;
+        c.challengeBondWei = uint96(msg.value);
+
+        emit FuturinoChallengeBondPosted(capsuleId, msg.sender, msg.value);
+        emit FuturinoCapsuleChallenged(capsuleId, msg.sender, challengeHash);
+    }
+
+    function resolveChallenge(bytes32 capsuleId, bool payoutAllowed, bytes32 resolutionHash) external onlyGuardian nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Challenged) revert Futurino__CapsuleState();
+        if (resolutionHash == bytes32(0)) revert Futurino__BadInput();
+
+        c.state = CapsuleState.Resolved;
+        c.payoutAllowed = payoutAllowed;
+        c.resolutionHash = resolutionHash;
+        emit FuturinoCapsuleResolved(capsuleId, payoutAllowed, resolutionHash);
+
+        // settle bond (ETH only)
+        if (c.challengeBondWei != 0 && c.challenger != address(0)) {
+            uint256 bond = uint256(c.challengeBondWei);
+            c.challengeBondWei = 0;
+            if (!payoutAllowed) {
+                // challenger wins: return bond
+                _credit(c.challenger, address(0), bond);
+                emit FuturinoChallengeBondSettled(capsuleId, c.challenger, true, bond, 0);
+            } else {
+                // challenger loses: slash portion to feeSink, return remainder
+                uint256 slashed = (bond * bondSlashBps) / 10_000;
+                uint256 back = bond - slashed;
+                if (slashed != 0) _credit(feeSink, address(0), slashed);
+                if (back != 0) _credit(c.challenger, address(0), back);
+                emit FuturinoChallengeBondSettled(capsuleId, c.challenger, false, back, slashed);
+            }
+        }
+    }
+
+    // =========
+    // Execute payout (pull-based credits)
+    // =========
+    function executePayout(bytes32 capsuleId) external whenNotPaused nonReentrant {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state == CapsuleState.None) revert Futurino__CapsuleMissing();
+        if (c.state == CapsuleState.Paid) revert Futurino__CapsuleState();
+
+        // if never challenged, allow after challenge window
+        uint64 now64 = uint64(block.timestamp);
+        if (c.state == CapsuleState.Open) {
+            if (c.proposedBeneficiary == address(0) || c.approvals < c.stewardQuorum) revert Futurino__CapsuleState();
+            if (now64 <= c.challengeLatestAt) revert Futurino__TooEarly();
+            c.state = CapsuleState.Resolved;
+            c.payoutAllowed = true;
+            c.resolutionHash = keccak256(abi.encodePacked("AUTO_OK", capsuleId, now64, DOMAIN_SALT));
+            emit FuturinoCapsuleResolved(capsuleId, true, c.resolutionHash);
+        } else if (c.state == CapsuleState.Challenged) {
+            revert Futurino__CapsuleState();
+        } else if (c.state != CapsuleState.Resolved) {
+            revert Futurino__CapsuleState();
+        }
+
+        if (!c.payoutAllowed) {
+            // return entire bounty to owner
+            _credit(c.owner, c.asset, c.bounty);
+            c.state = CapsuleState.Paid;
+            return;
+        }
+
+        uint16 feeBps = protocolFeeBps;
