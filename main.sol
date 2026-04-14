@@ -290,3 +290,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
 
     mapping(address => AssetConfig) public assetConfig;
 
+    // =========
+    // Accounting
+    // =========
+    mapping(address => mapping(address => uint256)) public withdrawable; // user => asset => amount
+
+    // =========
+    // Capsules
+    // =========
+    enum CapsuleState {
+        None,
+        Open,
+        Challenged,
+        Resolved,
+        Paid
+    }
+
+    struct Capsule {
+        CapsuleState state;
+        address owner;
+        address asset;
+        uint256 bounty;
+        bytes32 contentHash;
+
+        uint64 openAt;
+        uint64 finalEarliestAt;
+        uint64 finalLatestAt;
+        uint64 challengeLatestAt;
+        uint32 stewardQuorum;
+
+        // finalize voting compactness
+        address proposedBeneficiary;
+        uint256 proposedPayout;
+        uint32 approvals;
+
+        // challenge
+        address challenger;
+        bytes32 challengeHash;
+        uint96 challengeBondWei;
+
+        // resolution
+        bool payoutAllowed;
+        bytes32 resolutionHash;
+    }
+
+    mapping(bytes32 => Capsule) public capsules;
+
+    struct FinalizeProposal {
+        address beneficiary;
+        uint256 payout;
+        bytes32 proposalHash;
+    }
+
+    mapping(bytes32 => FinalizeProposal) public finalizeProposal;
+    mapping(bytes32 => mapping(address => bytes32)) public stewardVotedProposal; // capsuleId => steward => proposalHash
+
+    // replay protection for signatures
+    mapping(address => uint256) public ownerNonces;
+    mapping(bytes32 => bool) public usedDigests;
+
+    // challenge bond parameters
+    uint96 public minChallengeBondWei;
+    uint96 public maxChallengeBondWei;
+    uint16 public bondSlashBps; // if challenger loses, this % of bond is slashed to feeSink
+
+    // =========
+    // Modifiers
+    // =========
+    modifier onlyGovernor() {
+        if (msg.sender != governor) revert Futurino__NotGovernor();
+        _;
+    }
+
+    modifier onlyGuardian() {
