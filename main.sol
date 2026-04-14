@@ -874,3 +874,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         }
 
         uint16 feeBps = protocolFeeBps;
+        uint16 over = assetConfig[c.asset].feeBpsOverride;
+        if (over != 0) feeBps = over;
+        uint256 fee = (c.proposedPayout * feeBps) / 10_000;
+        uint256 payoutNet = c.proposedPayout - fee;
+        uint256 refund = c.bounty - c.proposedPayout;
+
+        if (fee != 0) _credit(feeSink, c.asset, fee);
+        _credit(c.proposedBeneficiary, c.asset, payoutNet);
+        if (refund != 0) _credit(c.owner, c.asset, refund);
+
+        c.state = CapsuleState.Paid;
+    }
+
+    // =========
+    // View helpers (frontends / indexers)
+    // =========
+    function getCapsuleCore(bytes32 capsuleId)
+        external
+        view
+        returns (
+            CapsuleState state,
+            address owner,
+            address asset,
+            uint256 bounty,
+            bytes32 contentHash,
+            uint64 openAt,
+            uint64 finalEarliestAt,
+            uint64 finalLatestAt,
+            uint64 challengeLatestAt,
+            uint32 stewardQuorum
+        )
+    {
+        Capsule storage c = capsules[capsuleId];
+        return (
+            c.state,
+            c.owner,
+            c.asset,
+            c.bounty,
+            c.contentHash,
+            c.openAt,
+            c.finalEarliestAt,
+            c.finalLatestAt,
+            c.challengeLatestAt,
+            c.stewardQuorum
+        );
+    }
+
+    function getCapsuleProposal(bytes32 capsuleId)
+        external
+        view
+        returns (
+            address proposedBeneficiary,
+            uint256 proposedPayout,
+            uint32 approvals,
+            bytes32 proposalHash,
+            address challenger,
+            bytes32 challengeHash,
+            uint96 challengeBondWei,
+            bool payoutAllowed,
+            bytes32 resolutionHash
+        )
+    {
+        Capsule storage c = capsules[capsuleId];
+        FinalizeProposal storage fp = finalizeProposal[capsuleId];
+        return (
+            c.proposedBeneficiary,
+            c.proposedPayout,
+            c.approvals,
+            fp.proposalHash,
+            c.challenger,
+            c.challengeHash,
+            c.challengeBondWei,
+            c.payoutAllowed,
