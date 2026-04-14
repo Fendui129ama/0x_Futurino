@@ -144,3 +144,76 @@ abstract contract FuturinoReentrancyGuard {
     constructor() {
         _rg = 1;
     }
+}
+
+abstract contract FuturinoPausable {
+    error FuturinoPausable__Paused();
+    error FuturinoPausable__NotPaused();
+
+    bool public paused;
+
+    modifier whenNotPaused() {
+        if (paused) revert FuturinoPausable__Paused();
+        _;
+    }
+
+    modifier whenPaused() {
+        if (!paused) revert FuturinoPausable__NotPaused();
+        _;
+    }
+
+    function _setPaused(bool v) internal {
+        paused = v;
+    }
+}
+
+contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
+    using FuturinoSet for FuturinoSet.AddressSet;
+
+    // =========
+    // Errors
+    // =========
+    error Futurino__NotGovernor();
+    error Futurino__NotGuardian();
+    error Futurino__NotSteward();
+    error Futurino__NotCapsuleOwner();
+    error Futurino__BadInput();
+    error Futurino__EtherRejected();
+    error Futurino__UnsupportedAsset();
+    error Futurino__CapsuleMissing();
+    error Futurino__CapsuleState();
+    error Futurino__TooEarly();
+    error Futurino__TooLate();
+    error Futurino__TransferFailed();
+    error Futurino__BadSig();
+    error Futurino__AlreadyUsed();
+    error Futurino__ChallengeExists();
+    error Futurino__NotChallenger();
+    error Futurino__FeeTooHigh();
+    error Futurino__GovPending();
+    error Futurino__NotPendingGovernor();
+    error Futurino__AssetConfig();
+    error Futurino__FinalizeProposal();
+    error Futurino__AlreadyVoted();
+    error Futurino__NoProposal();
+    error Futurino__BondRequired();
+    error Futurino__BondAsset();
+    error Futurino__CannotCancel();
+    error Futurino__TooManyStewards();
+
+    // =========
+    // Events
+    // =========
+    event FuturinoGovernorSet(address indexed oldGov, address indexed newGov);
+    event FuturinoGovernorProposed(address indexed currentGov, address indexed pendingGov);
+    event FuturinoGuardianSet(address indexed oldGuardian, address indexed newGuardian);
+    event FuturinoPauseSet(bool paused);
+
+    event FuturinoStewardSet(address indexed steward, bool allowed);
+    event FuturinoAssetToggled(address indexed asset, bool allowed);
+    event FuturinoAssetConfigSet(address indexed asset, uint16 feeBpsOverride, uint256 minBounty);
+
+    event FuturinoCapsuleOpened(
+        bytes32 indexed capsuleId,
+        address indexed owner,
+        address indexed asset,
