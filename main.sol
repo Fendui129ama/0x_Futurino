@@ -509,3 +509,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         uint64 finalLatestAt,
         uint64 challengeLatestAt,
         uint32 stewardQuorum
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(owner, asset, bounty, contentHash, openAt, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum)
+        );
+    }
+
+    // =========
+    // Funding helpers
+    // =========
+    function _pullToken(address token, address from, uint256 amount) internal {
+        if (amount == 0) return;
+        FuturinoSafeTransfer.safeTransferFrom(token, from, address(this), amount);
+    }
+
+    function _pushToken(address token, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        FuturinoSafeTransfer.safeTransfer(token, to, amount);
+    }
+
+    function _credit(address to, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        withdrawable[to][asset] += amount;
+    }
+
+    // =========
+    // Open capsule (direct)
+    // =========
+    function openCapsuleETH(
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum
+    ) external payable whenNotPaused nonReentrant returns (bytes32 capsuleId) {
+        capsuleId = _openCapsule(msg.sender, address(0), msg.value, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum);
+    }
+
+    function openCapsuleToken(
+        address token,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum
+    ) external whenNotPaused nonReentrant returns (bytes32 capsuleId) {
+        if (token == address(0)) revert Futurino__BadInput();
+        _pullToken(token, msg.sender, bounty);
+        capsuleId = _openCapsule(msg.sender, token, bounty, contentHash, finalEarliestAt, finalLatestAt, challengeLatestAt, stewardQuorum);
+    }
+
+    function _openCapsule(
+        address owner,
+        address asset,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum
+    ) internal returns (bytes32 capsuleId) {
+        if (!isAssetAllowed[asset]) revert Futurino__UnsupportedAsset();
+        if (contentHash == bytes32(0)) revert Futurino__BadInput();
+        if (bounty == 0) revert Futurino__BadInput();
+        if (stewardQuorum < MIN_STEWARD_QUORUM || stewardQuorum > MAX_STEWARD_QUORUM) revert Futurino__BadInput();
+        if (_stewards.length() == 0) revert Futurino__BadInput();
+
+        uint256 minB = uint256(assetConfig[asset].minBounty);
+        if (minB != 0 && bounty < minB) revert Futurino__BadInput();
+
+        uint64 now64 = uint64(block.timestamp);
+        if (!(finalEarliestAt > now64)) revert Futurino__BadInput();
+        if (!(finalLatestAt > finalEarliestAt)) revert Futurino__BadInput();
