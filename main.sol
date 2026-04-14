@@ -363,3 +363,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
     }
 
     modifier onlyGuardian() {
+        if (msg.sender != guardian) revert Futurino__NotGuardian();
+        _;
+    }
+
+    modifier onlySteward() {
+        if (!_stewards.contains(msg.sender)) revert Futurino__NotSteward();
+        _;
+    }
+
+    // =========
+    // Constructor
+    // =========
+    constructor() {
+        governor = msg.sender;
+        guardian = GENESIS_GUARDIAN;
+        feeSink = GENESIS_FEE_SINK;
+        protocolFeeBps = 77;
+        minChallengeBondWei = DEFAULT_MIN_BOND_WEI;
+        maxChallengeBondWei = DEFAULT_MAX_BOND_WEI;
+        bondSlashBps = 4_200; // 42%
+
+        // ETH + 2 “random” assets toggled off by default.
+        isAssetAllowed[address(0)] = true;
+        isAssetAllowed[GENESIS_SIGNAL] = false;
+        isAssetAllowed[address(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)] = false; // common stable (kept off)
+
+        // seed a few stewards (governor can rotate)
+        _stewards.add(0xCc12aB34Cd56Ef78aB90cD12eF34aB56cD78eF90);
+        _stewards.add(0x12aBCd34Ef56aB78Cd90Ef12aB34cD56eF78aB90);
+        _stewards.add(0xaB12cD34eF56aB78cD90eF12aB34cD56Ef78Ab90);
+
+        DOMAIN_SALT = keccak256(
+            abi.encodePacked(
+                block.chainid,
+                address(this),
+                msg.sender,
+                block.prevrandao,
+                block.timestamp,
+                GENESIS_FEE_SINK,
+                GENESIS_GUARDIAN,
+                bytes32(uint256(0x0f3B8aE1d4C2b9A6071E5f0A2d8C4e9B1a7F3c2D5e8A9b0C1d2E3f4A5b6C7d8))
+            )
+        );
+
+        emit FuturinoGovernorSet(address(0), governor);
+        emit FuturinoGuardianSet(address(0), guardian);
+        emit FuturinoProtocolFeeSet(protocolFeeBps, feeSink);
+        emit FuturinoChallengeBondSet(minChallengeBondWei, maxChallengeBondWei, bondSlashBps);
+        emit FuturinoPauseSet(false);
+    }
+
+    receive() external payable {
+        // only accept ETH from explicit funding calls (prevents accidental transfers)
+        if (msg.sender != address(this)) revert Futurino__EtherRejected();
+    }
+
+    fallback() external payable {
+        revert Futurino__EtherRejected();
+    }
+
+    // =========
+    // Admin
+    // =========
+    function proposeGovernor(address newGov) external onlyGovernor {
+        if (newGov == address(0)) revert Futurino__BadInput();
+        pendingGovernor = newGov;
+        emit FuturinoGovernorProposed(governor, newGov);
+    }
+
+    function acceptGovernor() external {
+        if (msg.sender != pendingGovernor) revert Futurino__NotPendingGovernor();
+        address old = governor;
+        governor = msg.sender;
