@@ -436,3 +436,76 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
         if (msg.sender != pendingGovernor) revert Futurino__NotPendingGovernor();
         address old = governor;
         governor = msg.sender;
+        pendingGovernor = address(0);
+        emit FuturinoGovernorSet(old, msg.sender);
+    }
+
+    function setGuardian(address newGuardian) external onlyGovernor {
+        if (newGuardian == address(0)) revert Futurino__BadInput();
+        address old = guardian;
+        guardian = newGuardian;
+        emit FuturinoGuardianSet(old, newGuardian);
+    }
+
+    function setPaused(bool v) external onlyGuardian {
+        _setPaused(v);
+        emit FuturinoPauseSet(v);
+    }
+
+    function setProtocolFee(uint16 feeBps_, address sink_) external onlyGovernor {
+        if (feeBps_ > MAX_FEE_BPS) revert Futurino__FeeTooHigh();
+        if (sink_ == address(0)) revert Futurino__BadInput();
+        protocolFeeBps = feeBps_;
+        feeSink = sink_;
+        emit FuturinoProtocolFeeSet(feeBps_, sink_);
+    }
+
+    function setChallengeBondParams(uint96 minBondWei_, uint96 maxBondWei_, uint16 slashBps_) external onlyGovernor {
+        if (minBondWei_ == 0 || maxBondWei_ < minBondWei_) revert Futurino__BadInput();
+        if (slashBps_ > MAX_BOND_SLASH_BPS) revert Futurino__BadInput();
+        minChallengeBondWei = minBondWei_;
+        maxChallengeBondWei = maxBondWei_;
+        bondSlashBps = slashBps_;
+        emit FuturinoChallengeBondSet(minBondWei_, maxBondWei_, slashBps_);
+    }
+
+    function setSteward(address steward, bool allowed) external onlyGovernor {
+        if (steward == address(0)) revert Futurino__BadInput();
+        if (allowed && _stewards.length() >= MAX_STEWARD_COUNT) revert Futurino__TooManyStewards();
+        bool changed = allowed ? _stewards.add(steward) : _stewards.remove(steward);
+        if (changed) emit FuturinoStewardSet(steward, allowed);
+    }
+
+    function stewardCount() external view returns (uint256) {
+        return _stewards.length();
+    }
+
+    function stewardAt(uint256 idx) external view returns (address) {
+        return _stewards.at(idx);
+    }
+
+    function toggleAsset(address asset, bool allowed) external onlyGovernor {
+        // asset==0 means ETH
+        isAssetAllowed[asset] = allowed;
+        emit FuturinoAssetToggled(asset, allowed);
+    }
+
+    function setAssetConfig(address asset, uint16 feeBpsOverride, uint256 minBounty) external onlyGovernor {
+        if (feeBpsOverride > MAX_ASSET_FEE_OVERRIDE_BPS) revert Futurino__AssetConfig();
+        assetConfig[asset] = AssetConfig({feeBpsOverride: feeBpsOverride, minBounty: uint240(minBounty)});
+        emit FuturinoAssetConfigSet(asset, feeBpsOverride, minBounty);
+    }
+
+    // =========
+    // Capsule identifiers
+    // =========
+    function computeCapsuleId(
+        address owner,
+        address asset,
+        uint256 bounty,
+        bytes32 contentHash,
+        uint64 openAt,
+        uint64 finalEarliestAt,
+        uint64 finalLatestAt,
+        uint64 challengeLatestAt,
+        uint32 stewardQuorum
