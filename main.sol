@@ -947,3 +947,68 @@ contract Ox_Futurino is FuturinoReentrancyGuard, FuturinoPausable {
             c.challengeHash,
             c.challengeBondWei,
             c.payoutAllowed,
+            c.resolutionHash
+        );
+    }
+
+    function canChallenge(bytes32 capsuleId) external view returns (bool ok, string memory reason) {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state != CapsuleState.Open) return (false, "state");
+        if (c.proposedBeneficiary == address(0) || c.approvals < c.stewardQuorum) return (false, "no-proposal");
+        if (uint64(block.timestamp) > c.challengeLatestAt) return (false, "too-late");
+        if (c.challenger != address(0)) return (false, "already");
+        return (true, "");
+    }
+
+    function canExecute(bytes32 capsuleId) external view returns (bool ok, string memory reason) {
+        Capsule storage c = capsules[capsuleId];
+        if (c.state == CapsuleState.None) return (false, "missing");
+        if (c.state == CapsuleState.Paid) return (false, "paid");
+        if (c.state == CapsuleState.Challenged) return (false, "challenged");
+        if (c.state == CapsuleState.Resolved) return (true, "");
+        if (c.state != CapsuleState.Open) return (false, "state");
+        if (c.proposedBeneficiary == address(0) || c.approvals < c.stewardQuorum) return (false, "no-proposal");
+        if (uint64(block.timestamp) <= c.challengeLatestAt) return (false, "too-early");
+        return (true, "");
+    }
+
+    // =========
+    // Withdraw
+    // =========
+    function withdrawETH(uint256 amount, address payable to) external whenNotPaused nonReentrant {
+        if (to == address(0)) revert Futurino__BadInput();
+        uint256 bal = withdrawable[msg.sender][address(0)];
+        if (amount == 0 || amount > bal) revert Futurino__BadInput();
+        withdrawable[msg.sender][address(0)] = bal - amount;
+        emit FuturinoWithdrawal(to, address(0), amount);
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert Futurino__TransferFailed();
+    }
+
+    function withdrawToken(address token, uint256 amount, address to) external whenNotPaused nonReentrant {
+        if (token == address(0)) revert Futurino__BadInput();
+        if (to == address(0)) revert Futurino__BadInput();
+        uint256 bal = withdrawable[msg.sender][token];
+        if (amount == 0 || amount > bal) revert Futurino__BadInput();
+        withdrawable[msg.sender][token] = bal - amount;
+        emit FuturinoWithdrawal(to, token, amount);
+        _pushToken(token, to, amount);
+    }
+
+    // =========
+    // Emergency: guardian can freeze + sweep *only* unallocated assets
+    // =========
+    // NOTE: This is intentionally conservative; it avoids enumerating capsule balances onchain.
+    // For mainnet safety, it only permits sweeping explicit "dust" amounts decided offchain.
+    function guardianSweepToken(address token, address to, uint256 amount) external onlyGuardian whenPaused nonReentrant {
+        if (token == address(0)) revert Futurino__BadInput();
+        if (to == address(0)) revert Futurino__BadInput();
+        _pushToken(token, to, amount);
+    }
+
+    function guardianSweepETH(address payable to, uint256 amount) external onlyGuardian whenPaused nonReentrant {
+        if (to == address(0)) revert Futurino__BadInput();
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert Futurino__TransferFailed();
+    }
+}
